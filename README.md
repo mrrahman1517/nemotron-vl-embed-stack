@@ -35,6 +35,8 @@ Files in this repo:
 - `docker-compose.yaml`: starts either a vLLM service or the NVIDIA NIM service
 - `.env.example`: environment variables for Docker Compose
 - `benchmark_embeddings.py`: benchmarks `/v1/embeddings` latency and throughput
+- `fastapi_wrapper.py`: adds stable app-facing endpoints on top of either backend
+- `run_fastapi_wrapper.sh` and `run_fastapi_wrapper.ps1`: launch the wrapper locally
 
 Typical flow:
 
@@ -91,6 +93,7 @@ This repo now includes a Compose file with two profiles:
 
 - `vllm`: launches the official `vllm/vllm-openai` image
 - `nim`: launches the official NVIDIA NIM container for this model
+- `wrapper`: launches a FastAPI service that fronts either backend
 
 Example:
 
@@ -102,6 +105,9 @@ docker compose --profile vllm up
 
 # NVIDIA NIM
 docker compose --profile nim up
+
+# FastAPI wrapper in front of whichever backend is on port 8000
+docker compose --profile wrapper up
 ```
 
 For vLLM, set `HF_TOKEN` if the model download needs authentication.
@@ -124,3 +130,33 @@ Useful options:
 - `--batch-size 8`
 - `--requests 30`
 - `--warmup 3`
+
+## FastAPI wrapper
+
+The wrapper gives you cleaner application-facing routes while still using the OpenAI-compatible backend under the hood.
+
+Endpoints:
+
+- `GET /healthz`
+- `GET /config`
+- `POST /embed/query`
+- `POST /embed/document`
+- `POST /embed/text`
+- `POST /v1/embeddings`
+
+Local run:
+
+```bash
+python -m pip install -r requirements-api.txt
+python -m uvicorn fastapi_wrapper:app --host 127.0.0.1 --port 8010
+```
+
+Example request:
+
+```bash
+curl -X POST http://127.0.0.1:8010/embed/query \
+  -H "Content-Type: application/json" \
+  -d '{"texts":["How is AI improving robotics?"]}'
+```
+
+If a backend rejects `input_type`, the wrapper can automatically retry without it when `ALLOW_INPUT_TYPE_FALLBACK=true`.

@@ -6,6 +6,7 @@ import urllib.request
 BASE_URL = os.environ.get("VLLM_BASE_URL", "http://127.0.0.1:8000")
 API_KEY = os.environ.get("VLLM_API_KEY", "")
 MODEL = os.environ.get("VLLM_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2")
+INPUT_TYPE = os.environ.get("EMBED_INPUT_TYPE", "")
 
 
 def create_embeddings(texts: list[str]) -> dict:
@@ -14,6 +15,8 @@ def create_embeddings(texts: list[str]) -> dict:
         "input": texts,
         "encoding_format": "float",
     }
+    if INPUT_TYPE:
+        payload["input_type"] = INPUT_TYPE
     headers = {
         "Content-Type": "application/json",
     }
