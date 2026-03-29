@@ -1,0 +1,39 @@
+services:
+  vllm:
+    profiles: ["vllm"]
+    image: vllm/vllm-openai:latest
+    container_name: nemotron-vllm
+    restart: unless-stopped
+    gpus: all
+    shm_size: "16gb"
+    ipc: host
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - "${HOME}/.cache/huggingface:/root/.cache/huggingface"
+    command:
+      - --model
+      - nvidia/llama-nemotron-embed-vl-1b-v2
+      - --task
+      - embed
+      - --trust-remote-code
+      - --dtype
+      - "${VLLM_DTYPE:-bfloat16}"
+      - --api-key
+      - "${VLLM_API_KEY:-local-dev-key}"
+
+  nim:
+    profiles: ["nim"]
+    image: "${NIM_IMAGE:-nvcr.io/nim/nvidia/llama-nemotron-embed-vl-1b-v2:1.12.0}"
+    container_name: nemotron-nim
+    restart: unless-stopped
+    gpus: all
+    shm_size: "16gb"
+    ports:
+      - "${NIM_PORT:-8000}:8000"
+    environment:
+      NGC_API_KEY: "${NGC_API_KEY:-}"
+    volumes:
+      - "${HOME}/.cache/nim:/opt/nim/.cache"

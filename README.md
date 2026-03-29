@@ -1,0 +1,126 @@
+# NemotronModels
+
+## Run the notebook
+
+From this folder, run:
+
+```powershell
+.\run_notebook.ps1 -Launch
+```
+
+This script will:
+
+- install the notebook dependencies into a local `.packages` folder
+- install `torch`
+- launch `nemotron_testing.ipynb`
+
+## Notes
+
+- The notebook now falls back to CPU automatically when CUDA is not available.
+- The ONNX export is written as an `onnx_export/` bundle in Colab because the model is too large for a single ONNX protobuf file.
+- If model download access requires authentication, set `HF_TOKEN` in your environment before launching Jupyter.
+
+## Efficient inference options
+
+### vLLM
+
+For a practical open-source serving path, use vLLM on Linux with NVIDIA GPUs.
+
+The current vLLM docs include a dedicated `LlamaNemotronVLForEmbedding` implementation for this model family, so vLLM is the best self-managed path if you want a fast embedding service.
+
+Files in this repo:
+
+- `serve_vllm_linux.sh`: starts an OpenAI-compatible vLLM embedding server
+- `vllm_embed_client.py`: sends text embedding requests to that server
+- `docker-compose.yaml`: starts either a vLLM service or the NVIDIA NIM service
+- `.env.example`: environment variables for Docker Compose
+- `benchmark_embeddings.py`: benchmarks `/v1/embeddings` latency and throughput
+
+Typical flow:
+
+```bash
+pip install -U vllm
+export VLLM_API_KEY=local-dev-key
+./serve_vllm_linux.sh
+python vllm_embed_client.py
+python benchmark_embeddings.py --api-key "$VLLM_API_KEY"
+```
+
+Notes:
+
+- This route is best for text embeddings first.
+- For image or image+text inputs, keep using the same model but send multimodal requests through vLLM's multimodal embedding APIs.
+- vLLM deployment is primarily a Linux/NVIDIA GPU workflow, not a native Windows one.
+
+### TensorRT / NVIDIA deployment
+
+For this exact model, the safest production-oriented TensorRT path is to use NVIDIA's NIM / Triton stack rather than trying to hand-convert the Hugging Face checkpoint yourself.
+
+Why:
+
+- The Hugging Face model card lists TensorRT, Triton, and NeMo Retriever Embedding NIM as the software integration path for this model family.
+- NVIDIA's NIM model page for `llama-nemotron-embed-vl-1b-v2` is available now.
+- TensorRT-LLM AutoDeploy currently documents support for `AutoModelForCausalLM` and `AutoModelForImageTextToText`, but not pooling-style embedding models like this one.
+
+Recommendation:
+
+- Use vLLM if you want an open-source embedding server you can run directly today.
+- Use NVIDIA NIM / Triton if your goal is the most supported TensorRT-backed production deployment path.
+
+Files in this repo:
+
+- `run_nim_embed_vl_linux.sh`: launches the official NVIDIA NIM container for this model
+- `vllm_embed_client.py`: can also call the local `/v1/embeddings` endpoint exposed by NIM if you point `VLLM_BASE_URL` at it
+- `docker-compose.yaml`: can also launch the NIM container using the `nim` profile
+- `benchmark_embeddings.py`: can benchmark the NIM endpoint too
+
+Typical flow:
+
+```bash
+export NGC_API_KEY=...
+./run_nim_embed_vl_linux.sh
+export VLLM_BASE_URL=http://127.0.0.1:8000
+unset VLLM_API_KEY
+python vllm_embed_client.py
+python benchmark_embeddings.py --input-type query
+```
+
+## Docker Compose
+
+This repo now includes a Compose file with two profiles:
+
+- `vllm`: launches the official `vllm/vllm-openai` image
+- `nim`: launches the official NVIDIA NIM container for this model
+
+Example:
+
+```bash
+cp .env.example .env
+
+# vLLM
+docker compose --profile vllm up
+
+# NVIDIA NIM
+docker compose --profile nim up
+```
+
+For vLLM, set `HF_TOKEN` if the model download needs authentication.
+
+For NIM, set `NGC_API_KEY`.
+
+## Benchmarking
+
+You can benchmark either server with:
+
+```bash
+python benchmark_embeddings.py
+```
+
+Useful options:
+
+- `--base-url http://127.0.0.1:8000`
+- `--api-key local-dev-key`
+- `--input-type query`
+- `--batch-size 8`
+- `--requests 30`
+- `--warmup 3`

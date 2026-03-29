@@ -1,0 +1,9 @@
+notebook
+ipywidgets
+nbformat
+nbconvert
+transformers
+huggingface-hub
+onnx
+onnxscript
+accelerate

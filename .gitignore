@@ -1,0 +1,11 @@
+.env
+.env.local
+__pycache__/
+.packages/
+.tmp/
+.venv/
+.venv_test/
+onnx_export/
+*.pyc
+*.pyo
+*.pyd
