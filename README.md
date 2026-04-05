@@ -14,6 +14,30 @@ This script will:
 - install `torch`
 - launch `nemotron_testing.ipynb`
 
+## Gemma 4 MAX vs vLLM Colab notebook
+
+This repo now also includes a Colab-oriented benchmark notebook for comparing MAX and vLLM on Gemma 4:
+
+- `gemma4_max_vs_vllm_colab.ipynb`
+- `build_gemma4_max_vs_vllm_colab_notebook.py`
+- `gemma4_colab_benchmark_helper.py`
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrrahman1517/nemotron-vl-embed-stack/blob/codex-gemma4-max-vs-vllm-colab/gemma4_max_vs_vllm_colab.ipynb)
+
+Use this notebook when you want to test the April 2, 2026 Modular blog claim that MAX achieves higher throughput than vLLM on Gemma 4.
+
+Important limitation:
+
+- the published claim was measured on NVIDIA B200
+- typical Colab GPUs are L4 or A100
+- so a standard Colab run is a directional comparison unless you have access to a B200-class runtime
+
+Recommended starting points:
+
+- L4 24 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`
+- A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
+- 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
+
 ## Notes
 
 - The notebook now falls back to CPU automatically when CUDA is not available.
