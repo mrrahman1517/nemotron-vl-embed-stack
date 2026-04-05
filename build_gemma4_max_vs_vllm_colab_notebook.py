@@ -251,11 +251,11 @@ max_python = ensure_uv_env(MAX_ENV)
 vllm_python = ensure_uv_env(VLLM_ENV)
 
 if MODULAR_CHANNEL == "nightly":
-subprocess.run(
-    [
-        "uv",
-        "pip",
-        "install",
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
             "--python",
             str(max_python),
             "modular",
