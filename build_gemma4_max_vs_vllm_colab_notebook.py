@@ -344,21 +344,44 @@ VLLM_SITE_PACKAGES = subprocess.run(
 
 max_version = subprocess.run([MAX_BIN, "--version"], capture_output=True, text=True).stdout.strip()
 vllm_version_output = subprocess.run([VLLM_BIN, "--version"], capture_output=True, text=True).stdout.strip()
-max_protobuf = subprocess.run(
-    [
-        str(max_python),
-        "-c",
-        "from google.protobuf import runtime_version; print(runtime_version.__file__); print(runtime_version.PROTOBUF_RUNTIME_VERSION)",
-    ],
+max_protobuf_probe_code = '''
+import importlib.metadata as md
+import traceback
+
+try:
+    print("protobuf dist:", md.version("protobuf"))
+except Exception as exc:
+    print("protobuf dist lookup failed:", repr(exc))
+
+try:
+    from google.protobuf import runtime_version as rv
+    print("runtime file:", getattr(rv, "__file__", "<none>"))
+    print("runtime version attr:", getattr(rv, "PROTOBUF_RUNTIME_VERSION", None))
+    print(
+        "runtime tuple:",
+        getattr(rv, "MAJOR", None),
+        getattr(rv, "MINOR", None),
+        getattr(rv, "PATCH", None),
+        getattr(rv, "SUFFIX", None),
+    )
+except Exception:
+    traceback.print_exc()
+'''
+max_protobuf_probe = subprocess.run(
+    [str(max_python), "-c", max_protobuf_probe_code],
     capture_output=True,
     text=True,
-    check=True,
-).stdout.strip()
+    check=False,
+)
 
 print("MAX install:", ACTUAL_MODULAR_SPEC)
 print("MAX version:", max_version)
 print("MAX site-packages:", MAX_SITE_PACKAGES)
-print("MAX protobuf runtime:", max_protobuf)
+print("MAX protobuf probe exit:", max_protobuf_probe.returncode)
+if max_protobuf_probe.stdout:
+    print(max_protobuf_probe.stdout.strip())
+if max_protobuf_probe.stderr:
+    print(max_protobuf_probe.stderr.strip())
 print("vLLM install:", ACTUAL_VLLM_SPEC)
 print("vLLM version:", vllm_version_output)
 print("vLLM site-packages:", VLLM_SITE_PACKAGES)
