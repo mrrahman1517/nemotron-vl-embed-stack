@@ -44,6 +44,14 @@ Token setup:
 - add a Colab secret named `HF_TOKEN` if you want a clean notebook run
 - if you skip the secret, the notebook will prompt for the token with hidden input
 
+MAX startup troubleshooting:
+
+- current MAX docs list NVIDIA driver `580+` for supported GPU acceleration
+- many Colab runtimes use an older NVIDIA driver, which can cause `max serve` to stall or fail
+- current MAX docs also note that older NVIDIA drivers can sometimes be bypassed by setting `MODULAR_NVPTX_COMPILER_PATH` to a system `ptxas` binary
+- the notebook now does a MAX driver preflight and a `max warm-cache` step before `max serve`
+- if you still want to try an older driver anyway, set `FAIL_ON_UNSUPPORTED_MAX_DRIVER = False` in the setup cell
+
 ## Notes
 
 - The notebook now falls back to CPU automatically when CUDA is not available.

@@ -165,6 +165,49 @@ def ensure_server_ready(base_url: str, *, timeout_s: int = 1800) -> None:
     raise TimeoutError(f"Server at {base_url} did not become ready within {timeout_s}s. Last error: {last_error}")
 
 
+def ensure_server_ready_with_logs(
+    base_url: str,
+    handle: ManagedProcess,
+    *,
+    timeout_s: int = 1800,
+    log_interval_s: int = 30,
+) -> None:
+    if requests is None:
+        raise RuntimeError("requests is required for readiness checks.")
+
+    deadline = time.time() + timeout_s
+    last_error = None
+    next_log_time = time.time() + log_interval_s
+
+    while time.time() < deadline:
+        if handle.process.poll() is not None:
+            raise RuntimeError(
+                f"{handle.name} exited before becoming ready. "
+                f"Last log lines:\n{tail_log(handle.log_path, lines=120)}"
+            )
+
+        try:
+            response = requests.get(f"{base_url.rstrip('/')}/v1/models", timeout=10)
+            if response.ok:
+                print(f"Server ready at {base_url}")
+                return
+            last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+        except Exception as exc:  # pragma: no cover - runtime specific
+            last_error = str(exc)
+
+        if time.time() >= next_log_time:
+            print(f"Still waiting for {handle.name} at {base_url}")
+            print(tail_log(handle.log_path, lines=80))
+            next_log_time = time.time() + log_interval_s
+
+        time.sleep(5)
+
+    raise TimeoutError(
+        f"Server at {base_url} did not become ready within {timeout_s}s. "
+        f"Last error: {last_error}\nLast log lines:\n{tail_log(handle.log_path, lines=120)}"
+    )
+
+
 def warmup_chat(base_url: str, model: str) -> dict[str, Any]:
     if requests is None:
         raise RuntimeError("requests is required for warmup requests.")

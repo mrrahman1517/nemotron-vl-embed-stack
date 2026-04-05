@@ -98,6 +98,18 @@ Recommended setup:
 If you do not add the secret ahead of time, the notebook will prompt you for the token with hidden input.
 """
         ),
+        markdown_cell(
+            """## MAX-Specific Reality Check
+
+If the notebook appears to hang during `max serve`, the usual causes are:
+
+- the first MAX run is still downloading weights or compiling kernels
+- the current runtime is using an NVIDIA driver older than what current MAX docs require
+- the selected model is too large for the available runtime and batch settings
+
+This notebook now performs a driver preflight and a `max warm-cache` step before starting the server so those issues are easier to distinguish.
+"""
+        ),
         code_cell(
             """import subprocess
 import sys
@@ -112,6 +124,7 @@ subprocess.run(
         code_cell(
             """import getpass
 import os
+import shutil
 from pathlib import Path
 
 from gemma4_colab_benchmark_helper import choose_gemma4_model, detect_gpu
@@ -146,7 +159,10 @@ MODULAR_CHANNEL = "stable"  # change to "nightly" if you want the newest MAX bui
 MODULAR_VERSION = "26.2"
 VLLM_VERSION = "0.18.2rc1.dev7"
 GPU_MEMORY_UTILIZATION = 0.90
-MAX_BATCH_SIZE = 8
+FAIL_ON_UNSUPPORTED_MAX_DRIVER = True
+RUN_MAX_WARM_CACHE = True
+MAX_STARTUP_TIMEOUT_S = 1800
+MAX_BATCH_SIZE = 4 if gpu and gpu.memory_gb < 90 else 8
 BENCHMARK_DATASET = "random"
 NUM_PROMPTS = 64 if gpu and gpu.memory_gb < 75 else 128
 MAX_CONCURRENCY = 8 if gpu and gpu.memory_gb < 75 else 16
@@ -168,12 +184,31 @@ print("Selection note:", MODEL_NOTE)
 if gpu and "B200" not in gpu.name.upper():
     print("This is not a B200 runtime, so the result should be interpreted as directional rather than exact.")
 if gpu:
+    driver_major = None
     try:
         driver_major = int(gpu.driver_version.split(".")[0])
-        if driver_major < 580:
-            print("Warning: current MAX docs list NVIDIA driver 580+ for supported GPU acceleration.")
     except Exception:
-        pass
+        print("Warning: could not parse the NVIDIA driver version from", gpu.driver_version)
+    if driver_major is not None and driver_major < 580:
+        ptxas_path = shutil.which("ptxas") or "/usr/local/cuda/bin/ptxas"
+        if os.path.exists(ptxas_path):
+            os.environ["MODULAR_NVPTX_COMPILER_PATH"] = ptxas_path
+            print(
+                "Detected an older NVIDIA driver, so MAX will use "
+                f"MODULAR_NVPTX_COMPILER_PATH={ptxas_path} to try the documented bypass."
+            )
+        else:
+            message = (
+                f"Detected NVIDIA driver {gpu.driver_version}. Current MAX docs list driver 580+ "
+                "for supported GPU acceleration. Colab often uses an older driver, which can make "
+                "MAX startup hang or fail. A documented workaround is setting "
+                "MODULAR_NVPTX_COMPILER_PATH to a system ptxas binary, but none was found in this "
+                "runtime. Use a supported host for a reliable MAX run, or set "
+                "FAIL_ON_UNSUPPORTED_MAX_DRIVER = False if you want to try anyway."
+            )
+            if FAIL_ON_UNSUPPORTED_MAX_DRIVER:
+                raise RuntimeError(message)
+            print("Warning:", message)
 """
         ),
         code_cell(
@@ -289,7 +324,8 @@ This uses the OpenAI-compatible `max serve` endpoint and then benchmarks it with
         ),
         code_cell(
             """from gemma4_colab_benchmark_helper import (
-    ensure_server_ready,
+    ensure_server_ready_with_logs,
+    run,
     start_logged_process,
     tail_log,
     warmup_chat,
@@ -298,6 +334,17 @@ This uses the OpenAI-compatible `max serve` endpoint and then benchmarks it with
 server_env = os.environ.copy()
 server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+
+if RUN_MAX_WARM_CACHE:
+    run(
+        [
+            MAX_BIN,
+            "warm-cache",
+            "--model",
+            MODEL,
+        ],
+        env=server_env,
+    )
 
 max_handle = start_logged_process(
     "max_server",
@@ -321,7 +368,11 @@ max_handle = start_logged_process(
     env=server_env,
 )
 
-ensure_server_ready(f"http://127.0.0.1:{MAX_PORT}", timeout_s=1800)
+ensure_server_ready_with_logs(
+    f"http://127.0.0.1:{MAX_PORT}",
+    max_handle,
+    timeout_s=MAX_STARTUP_TIMEOUT_S,
+)
 warmup_chat(f"http://127.0.0.1:{MAX_PORT}", MODEL)
 print(tail_log(max_handle.log_path, lines=40))
 """
