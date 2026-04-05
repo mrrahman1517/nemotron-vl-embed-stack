@@ -251,11 +251,11 @@ max_python = ensure_uv_env(MAX_ENV)
 vllm_python = ensure_uv_env(VLLM_ENV)
 
 if MODULAR_CHANNEL == "nightly":
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
+subprocess.run(
+    [
+        "uv",
+        "pip",
+        "install",
             "--python",
             str(max_python),
             "modular",
@@ -283,7 +283,10 @@ else:
     )
     ACTUAL_MODULAR_SPEC = f"modular=={MODULAR_VERSION}"
 
-subprocess.run(["uv", "pip", "install", "--python", str(max_python), "requests"], check=True)
+subprocess.run(
+    ["uv", "pip", "install", "--python", str(max_python), "requests", "protobuf==6.33.5"],
+    check=True,
+)
 
 ACTUAL_VLLM_SPEC = f"vllm=={VLLM_VERSION}"
 try:
@@ -329,9 +332,19 @@ VLLM_BIN = str(VLLM_ENV / "bin" / "vllm")
 
 max_version = subprocess.run([MAX_BIN, "--version"], capture_output=True, text=True).stdout.strip()
 vllm_version_output = subprocess.run([VLLM_BIN, "--version"], capture_output=True, text=True).stdout.strip()
+max_protobuf = subprocess.run(
+    [
+        str(max_python),
+        "-c",
+        "from google.protobuf import runtime_version; print(runtime_version.PROTOBUF_RUNTIME_VERSION)",
+    ],
+    capture_output=True,
+    text=True,
+).stdout.strip()
 
 print("MAX install:", ACTUAL_MODULAR_SPEC)
 print("MAX version:", max_version)
+print("MAX protobuf runtime:", max_protobuf)
 print("vLLM install:", ACTUAL_VLLM_SPEC)
 print("vLLM version:", vllm_version_output)
 """
@@ -356,6 +369,8 @@ server_env = os.environ.copy()
 if HF_TOKEN:
     server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["PYTHONNOUSERSITE"] = "1"
+server_env.pop("PYTHONPATH", None)
 
 if RUN_MAX_WARM_CACHE:
     warm_cache_ok = run_best_effort(
@@ -419,6 +434,7 @@ max_result_path = run_benchmark(
     random_output_len=RANDOM_OUTPUT_LEN,
     random_coefficient_of_variation=RANDOM_COV,
     tokenizer=MODEL,
+    env=server_env,
 )
 
 max_result = load_benchmark_result(max_result_path)
@@ -450,6 +466,8 @@ server_env = os.environ.copy()
 if HF_TOKEN:
     server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["PYTHONNOUSERSITE"] = "1"
+server_env.pop("PYTHONPATH", None)
 
 vllm_handle = start_logged_process(
     "vllm_server",
@@ -495,6 +513,7 @@ vllm_result_path = run_benchmark(
     random_output_len=RANDOM_OUTPUT_LEN,
     random_coefficient_of_variation=RANDOM_COV,
     tokenizer=MODEL,
+    env=server_env,
 )
 
 vllm_result = load_benchmark_result(vllm_result_path)

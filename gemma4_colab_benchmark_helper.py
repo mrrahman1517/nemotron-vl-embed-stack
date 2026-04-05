@@ -299,6 +299,7 @@ def run_benchmark(
     random_coefficient_of_variation: str = "0.0,0.0",
     collect_gpu_stats: bool = True,
     tokenizer: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> Path:
     result_dir = Path(result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -356,7 +357,7 @@ def run_benchmark(
     for save_flag in save_flags:
         cmd = [*command, save_flag]
         try:
-            run(cmd)
+            run(cmd, env=env)
             return result_path
         except subprocess.CalledProcessError as exc:
             last_error = exc
