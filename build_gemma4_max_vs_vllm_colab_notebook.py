@@ -329,6 +329,18 @@ subprocess.run(
 
 MAX_BIN = str(MAX_ENV / "bin" / "max")
 VLLM_BIN = str(VLLM_ENV / "bin" / "vllm")
+MAX_SITE_PACKAGES = subprocess.run(
+    [str(max_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
+VLLM_SITE_PACKAGES = subprocess.run(
+    [str(vllm_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
 
 max_version = subprocess.run([MAX_BIN, "--version"], capture_output=True, text=True).stdout.strip()
 vllm_version_output = subprocess.run([VLLM_BIN, "--version"], capture_output=True, text=True).stdout.strip()
@@ -336,17 +348,20 @@ max_protobuf = subprocess.run(
     [
         str(max_python),
         "-c",
-        "from google.protobuf import runtime_version; print(runtime_version.PROTOBUF_RUNTIME_VERSION)",
+        "from google.protobuf import runtime_version; print(runtime_version.__file__); print(runtime_version.PROTOBUF_RUNTIME_VERSION)",
     ],
     capture_output=True,
     text=True,
+    check=True,
 ).stdout.strip()
 
 print("MAX install:", ACTUAL_MODULAR_SPEC)
 print("MAX version:", max_version)
+print("MAX site-packages:", MAX_SITE_PACKAGES)
 print("MAX protobuf runtime:", max_protobuf)
 print("vLLM install:", ACTUAL_VLLM_SPEC)
 print("vLLM version:", vllm_version_output)
+print("vLLM site-packages:", VLLM_SITE_PACKAGES)
 """
         ),
         markdown_cell(
@@ -369,8 +384,10 @@ server_env = os.environ.copy()
 if HF_TOKEN:
     server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["VIRTUAL_ENV"] = str(MAX_ENV)
+server_env["PATH"] = f"{MAX_ENV / 'bin'}:{server_env['PATH']}"
 server_env["PYTHONNOUSERSITE"] = "1"
-server_env.pop("PYTHONPATH", None)
+server_env["PYTHONPATH"] = MAX_SITE_PACKAGES
 
 if RUN_MAX_WARM_CACHE:
     warm_cache_ok = run_best_effort(
@@ -466,8 +483,10 @@ server_env = os.environ.copy()
 if HF_TOKEN:
     server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["VIRTUAL_ENV"] = str(VLLM_ENV)
+server_env["PATH"] = f"{VLLM_ENV / 'bin'}:{server_env['PATH']}"
 server_env["PYTHONNOUSERSITE"] = "1"
-server_env.pop("PYTHONPATH", None)
+server_env["PYTHONPATH"] = VLLM_SITE_PACKAGES
 
 vllm_handle = start_logged_process(
     "vllm_server",
