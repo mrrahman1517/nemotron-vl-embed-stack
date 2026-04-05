@@ -184,6 +184,7 @@ server_env["VIRTUAL_ENV"] = str(VLLM_ENV)
 server_env["PATH"] = f"{VLLM_ENV / 'bin'}:{server_env['PATH']}"
 server_env["PYTHONNOUSERSITE"] = "1"
 server_env["PYTHONPATH"] = VLLM_SITE_PACKAGES
+server_env["MPLBACKEND"] = "Agg"
 
 vllm_handle = start_logged_process(
     "vllm_server",
