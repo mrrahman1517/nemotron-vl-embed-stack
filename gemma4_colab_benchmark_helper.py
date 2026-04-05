@@ -38,6 +38,28 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: str | None = 
     subprocess.run(cmd, check=True, env=env, cwd=cwd)
 
 
+def run_best_effort(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+) -> bool:
+    print("$", shlex.join(cmd))
+    completed = subprocess.run(
+        cmd,
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=cwd,
+    )
+    if completed.stdout:
+        print(completed.stdout)
+    if completed.stderr:
+        print(completed.stderr)
+    return completed.returncode == 0
+
+
 def capture(cmd: list[str], *, env: dict[str, str] | None = None, cwd: str | None = None) -> str:
     print("$", shlex.join(cmd))
     completed = subprocess.run(
@@ -80,14 +102,14 @@ def detect_gpu() -> GPUInfo | None:
     )
 
 
-def choose_gemma4_model(gpu: GPUInfo | None, force_model: str | None = None) -> tuple[str, str]:
+def choose_benchmark_model(gpu: GPUInfo | None, force_model: str | None = None) -> tuple[str, str]:
     if force_model:
         return force_model, "Using a user-forced model override."
 
     if gpu is None:
         return (
-            "google/gemma-4-E4B-it",
-            "GPU detection failed; defaulting to Gemma 4 E4B for a smaller-footprint run.",
+            "allenai/OLMo-2-0425-1B-Instruct",
+            "GPU detection failed; defaulting to a small open compatibility model so the notebook can still validate the benchmark flow.",
         )
 
     if gpu.memory_gb >= 75:
@@ -107,10 +129,31 @@ def choose_gemma4_model(gpu: GPUInfo | None, force_model: str | None = None) -> 
             "This is a directional Colab-friendly run on a smaller Gemma 4 variant because typical Colab GPUs do not expose B200-class memory.",
         )
 
+    if gpu.memory_gb >= 14:
+        return (
+            "allenai/OLMo-2-0425-1B-Instruct",
+            "No Gemma 4 model cleanly fits on this GPU. Falling back to a smaller open OLMo model so you can still compare MAX and vLLM on the same runtime. Treat this as a methodology check, not verification of the Gemma 4 claim.",
+        )
+
     raise RuntimeError(
         f"Detected only {gpu.memory_gb:.1f} GiB of VRAM on {gpu.name}. "
-        "Use at least a 24 GiB GPU for Gemma 4 E4B, or switch to an 80 GiB-class runtime for Gemma 4 26B-A4B."
+        "This is too small for the Gemma 4 models targeted by this notebook and likely too tight even for a useful fallback benchmark."
     )
+
+
+def limited_max_gpu_reason(gpu: GPUInfo | None) -> str | None:
+    if gpu is None:
+        return None
+
+    name = gpu.name.upper()
+    compute_capability = (gpu.compute_capability or "").strip()
+    if "T4" in name or "RTX 20" in name or compute_capability.startswith("7.5"):
+        return (
+            f"Detected {gpu.name} (compute capability {compute_capability or 'unknown'}), which is a Turing-class GPU. "
+            "Current MAX package docs place NVIDIA T4 and RTX 20XX in limited compatibility and state that these GPUs "
+            'do not currently run major GenAI models with MAX. This notebook should use an L4, A10, A100, H100/H200, or B200-class GPU for a real MAX-vs-vLLM comparison.'
+        )
+    return None
 
 
 def start_logged_process(
@@ -163,6 +206,49 @@ def ensure_server_ready(base_url: str, *, timeout_s: int = 1800) -> None:
             last_error = str(exc)
         time.sleep(5)
     raise TimeoutError(f"Server at {base_url} did not become ready within {timeout_s}s. Last error: {last_error}")
+
+
+def ensure_server_ready_with_logs(
+    base_url: str,
+    handle: ManagedProcess,
+    *,
+    timeout_s: int = 1800,
+    log_interval_s: int = 30,
+) -> None:
+    if requests is None:
+        raise RuntimeError("requests is required for readiness checks.")
+
+    deadline = time.time() + timeout_s
+    last_error = None
+    next_log_time = time.time() + log_interval_s
+
+    while time.time() < deadline:
+        if handle.process.poll() is not None:
+            raise RuntimeError(
+                f"{handle.name} exited before becoming ready. "
+                f"Last log lines:\n{tail_log(handle.log_path, lines=120)}"
+            )
+
+        try:
+            response = requests.get(f"{base_url.rstrip('/')}/v1/models", timeout=10)
+            if response.ok:
+                print(f"Server ready at {base_url}")
+                return
+            last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+        except Exception as exc:  # pragma: no cover - runtime specific
+            last_error = str(exc)
+
+        if time.time() >= next_log_time:
+            print(f"Still waiting for {handle.name} at {base_url}")
+            print(tail_log(handle.log_path, lines=80))
+            next_log_time = time.time() + log_interval_s
+
+        time.sleep(5)
+
+    raise TimeoutError(
+        f"Server at {base_url} did not become ready within {timeout_s}s. "
+        f"Last error: {last_error}\nLast log lines:\n{tail_log(handle.log_path, lines=120)}"
+    )
 
 
 def warmup_chat(base_url: str, model: str) -> dict[str, Any]:
@@ -228,6 +314,7 @@ def run_benchmark(
     random_coefficient_of_variation: str = "0.0,0.0",
     collect_gpu_stats: bool = True,
     tokenizer: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> Path:
     result_dir = Path(result_dir)
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +372,7 @@ def run_benchmark(
     for save_flag in save_flags:
         cmd = [*command, save_flag]
         try:
-            run(cmd)
+            run(cmd, env=env)
             return result_path
         except subprocess.CalledProcessError as exc:
             last_error = exc

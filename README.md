@@ -31,12 +31,46 @@ Important limitation:
 - the published claim was measured on NVIDIA B200
 - typical Colab GPUs are L4 or A100
 - so a standard Colab run is a directional comparison unless you have access to a B200-class runtime
+- on a T4 or other Turing-class GPU, do not use that notebook for MAX-vs-vLLM comparison because current MAX docs list T4 and RTX 20XX in limited compatibility and our Colab testing hit MAX compile failure on that class
 
 Recommended starting points:
 
 - L4 24 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`
 - A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
 - 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
+- T4 / Turing-class GPU: do not use this notebook for MAX-vs-vLLM comparison; current MAX docs list T4 and RTX 20XX in limited compatibility, and our Colab testing hit MAX compile failure on this class
+
+Token setup:
+
+- accept the Hugging Face license for whichever model the notebook selects first if that model is gated
+- add a Colab secret named `HF_TOKEN` if you want a clean notebook run
+- if you skip the secret, the notebook will only prompt for the token when the selected model likely needs it
+
+MAX startup troubleshooting:
+
+- current MAX docs list NVIDIA driver `580+` for supported GPU acceleration
+- many Colab runtimes use an older NVIDIA driver, which can cause `max serve` to stall or fail
+- current MAX docs also note that older NVIDIA drivers can sometimes be bypassed by setting `MODULAR_NVPTX_COMPILER_PATH` to a system `ptxas` binary
+- the notebook now does a MAX driver preflight and a best-effort `max warm-cache` step before `max serve`
+- if you still want to try an older driver anyway, set `FAIL_ON_UNSUPPORTED_MAX_DRIVER = False` in the setup cell
+
+## Free Colab vLLM-only notebook
+
+If you only want a usable benchmark on a free Colab GPU, this repo also includes a vLLM-only notebook designed for T4-class sessions:
+
+- `vllm_free_colab_benchmark.ipynb`
+- `build_vllm_free_colab_benchmark_notebook.py`
+- `vllm_free_colab_benchmark_helper.py`
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mrrahman1517/nemotron-vl-embed-stack/blob/codex-gemma4-max-vs-vllm-colab/vllm_free_colab_benchmark.ipynb)
+
+Use this notebook when:
+
+- you have a free Colab GPU and want a real `vLLM` throughput number
+- you do not need `MAX` in the same run
+- you land on a T4 or similar GPU and want an open small-model benchmark that should actually complete
+
+Do not use this notebook for TPU sessions such as `v5e-1`. vLLM TPU support is a separate TPU-VM workflow, and it still would not help with a MAX-vs-vLLM comparison.
 
 ## Notes
 

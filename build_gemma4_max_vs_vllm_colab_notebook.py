@@ -41,7 +41,7 @@ This notebook is designed to test the April 2, 2026 Modular blog claim that **MA
 
 What this notebook does:
 
-- runs **MAX** and **vLLM** side by side against the same Gemma 4 model
+- runs **MAX** and **vLLM** side by side against the same selected model on the current runtime
 - benchmarks both with the **same harness**: `max benchmark`
 - reports request throughput, output token throughput, TTFT, TPOT, ITL, and optional GPU stats
 
@@ -50,6 +50,8 @@ Important caveat:
 - the blog claim is about **NVIDIA B200** hardware
 - most Colab runtimes provide **L4** or **A100**, not B200
 - if you run this on L4 or A100, the result is still useful, but it is a **directional comparison**, not an exact reproduction of the published number
+- if you run this on a **T4 or other Turing-class GPU**, the notebook now stops early because current MAX docs list that class in limited compatibility and our Colab testing shows MAX compilation failure there
+- if you run this on a **non-Turing sub-24GB GPU**, the notebook can still drop into a **small-GPU fallback mode** with a much smaller model for a methodology check
 """
         ),
         markdown_cell(
@@ -68,6 +70,7 @@ Practical interpretation:
 
 - if the runtime has about **24 GiB** VRAM, this notebook defaults to `google/gemma-4-E4B-it`
 - if the runtime has about **80 GiB** VRAM, it defaults to `google/gemma-4-26B-A4B-it`
+- if the runtime has about **14 to 16 GiB** VRAM on a non-Turing GPU, it falls back to `allenai/OLMo-2-0425-1B-Instruct`
 - only a **B200-class** run can directly test the blog's exact hardware claim
 """
         ),
@@ -79,9 +82,36 @@ Use these as starting points before you run the benchmark:
 - **Colab L4 (24 GiB)**: keep the default `google/gemma-4-E4B-it`, use `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`, and leave `GPU_MEMORY_UTILIZATION = 0.90`
 - **Colab A100 (40 GiB)**: still use `google/gemma-4-E4B-it`, and you can usually try `NUM_PROMPTS = 96` to `128` and `MAX_CONCURRENCY = 8` to `16`
 - **80 GiB GPU or larger**: switch to `google/gemma-4-26B-A4B-it`, use `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`, and keep `GPU_MEMORY_UTILIZATION` between `0.85` and `0.90`
+- **T4 / Turing-class GPU**: do not use this notebook for MAX-vs-vLLM comparison; switch to an L4, A10, A100, or better runtime
 - **B200**: this is the only class of hardware that can directly test the published claim instead of just giving a directional comparison
 
 If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then reduce `MAX_CONCURRENCY`, and finally reduce `NUM_PROMPTS`.
+"""
+        ),
+        markdown_cell(
+            """## Before You Run
+
+You may need Hugging Face access for the model the notebook will use.
+
+Recommended setup:
+
+- accept the Hugging Face model license for the model you plan to test if it is gated
+- create a Hugging Face access token with model download access
+- store it in a Colab secret named `HF_TOKEN` when you are using a gated model such as Gemma 4
+
+If you do not add the secret ahead of time, the notebook will prompt you for the token with hidden input only when the selected model likely needs it.
+"""
+        ),
+        markdown_cell(
+            """## MAX-Specific Reality Check
+
+If the notebook appears to hang during `max serve`, the usual causes are:
+
+- the first MAX run is still downloading weights or compiling kernels
+- the current runtime is using an NVIDIA driver older than what current MAX docs require
+- the selected model is too large for the available runtime and batch settings
+
+This notebook now performs a driver preflight and a `max warm-cache` step before starting the server so those issues are easier to distinguish.
 """
         ),
         code_cell(
@@ -96,13 +126,22 @@ subprocess.run(
         ),
         code_cell(helper_write_cell),
         code_cell(
-            """import os
+            """import getpass
+import os
+import shutil
 from pathlib import Path
 
-from gemma4_colab_benchmark_helper import choose_gemma4_model, detect_gpu
+from gemma4_colab_benchmark_helper import choose_benchmark_model, detect_gpu, limited_max_gpu_reason
 
 os.environ.setdefault("HF_HOME", "/content/hf-cache")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+
+gpu = detect_gpu()
+print("Detected GPU:", gpu)
+
+FORCE_MODEL = None
+MODEL, MODEL_NOTE = choose_benchmark_model(gpu, FORCE_MODEL)
+IS_SMALL_GPU_FALLBACK = MODEL == "allenai/OLMo-2-0425-1B-Instruct"
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 try:
@@ -112,27 +151,20 @@ try:
 except Exception:
     pass
 
-if not HF_TOKEN:
-    raise ValueError(
-        "Set HF_TOKEN in a Colab secret named HF_TOKEN or in os.environ before continuing."
-    )
+MODEL_LIKELY_GATED = MODEL.startswith(("google/", "meta-llama/"))
 
-os.environ["HF_TOKEN"] = HF_TOKEN
+if MODEL_LIKELY_GATED and not HF_TOKEN:
+    HF_TOKEN = getpass.getpass("Enter your Hugging Face token (input hidden): ").strip()
 
-gpu = detect_gpu()
-print("Detected GPU:", gpu)
-
-FORCE_MODEL = None
 MODULAR_CHANNEL = "stable"  # change to "nightly" if you want the newest MAX build
 MODULAR_VERSION = "26.2"
 VLLM_VERSION = "0.18.2rc1.dev7"
 GPU_MEMORY_UTILIZATION = 0.90
-MAX_BATCH_SIZE = 8
+FAIL_ON_UNSUPPORTED_MAX_DRIVER = True
+FAIL_ON_LIMITED_MAX_GPU = True
+RUN_MAX_WARM_CACHE = True
+MAX_STARTUP_TIMEOUT_S = 1800
 BENCHMARK_DATASET = "random"
-NUM_PROMPTS = 64 if gpu and gpu.memory_gb < 75 else 128
-MAX_CONCURRENCY = 8 if gpu and gpu.memory_gb < 75 else 16
-RANDOM_INPUT_LEN = 550
-RANDOM_OUTPUT_LEN = 256
 RANDOM_COV = "0.0,0.0"
 REQUEST_RATE = "inf"
 MAX_PORT = 8000
@@ -141,20 +173,69 @@ LOG_DIR = Path("/content/benchmark-logs")
 RESULT_DIR = Path("/content/benchmark-results")
 ENV_ROOT = Path("/content/benchmark-envs")
 
-MODEL, MODEL_NOTE = choose_gemma4_model(gpu, FORCE_MODEL)
-MAX_MODEL_LEN = 8192 if "E4B" in MODEL else 32768
+if HF_TOKEN:
+    os.environ["HF_TOKEN"] = HF_TOKEN
+elif MODEL_LIKELY_GATED:
+    raise ValueError(
+        "No Hugging Face token was provided for a gated model. Add a Colab secret named HF_TOKEN, "
+        "set os.environ['HF_TOKEN'], or paste the token into the hidden prompt."
+    )
+else:
+    print("Proceeding without HF_TOKEN because the selected fallback model is open.")
+
+if IS_SMALL_GPU_FALLBACK:
+    GPU_MEMORY_UTILIZATION = 0.85
+    MAX_BATCH_SIZE = 4
+    NUM_PROMPTS = 32
+    MAX_CONCURRENCY = 4
+    RANDOM_INPUT_LEN = 256
+    RANDOM_OUTPUT_LEN = 96
+    MAX_MODEL_LEN = 4096
+else:
+    MAX_BATCH_SIZE = 4 if gpu and gpu.memory_gb < 90 else 8
+    NUM_PROMPTS = 64 if gpu and gpu.memory_gb < 75 else 128
+    MAX_CONCURRENCY = 8 if gpu and gpu.memory_gb < 75 else 16
+    RANDOM_INPUT_LEN = 550
+    RANDOM_OUTPUT_LEN = 256
+    MAX_MODEL_LEN = 8192 if "E4B" in MODEL else 32768
 
 print("Selected model:", MODEL)
 print("Selection note:", MODEL_NOTE)
 if gpu and "B200" not in gpu.name.upper():
     print("This is not a B200 runtime, so the result should be interpreted as directional rather than exact.")
+if IS_SMALL_GPU_FALLBACK:
+    print("Small-GPU fallback mode is active. This run is for MAX-vs-vLLM methodology comparison only, not Gemma 4 claim verification.")
+limited_gpu_message = limited_max_gpu_reason(gpu)
+if limited_gpu_message:
+    if FAIL_ON_LIMITED_MAX_GPU:
+        raise RuntimeError(limited_gpu_message)
+    print("Warning:", limited_gpu_message)
 if gpu:
+    driver_major = None
     try:
         driver_major = int(gpu.driver_version.split(".")[0])
-        if driver_major < 580:
-            print("Warning: current MAX docs list NVIDIA driver 580+ for supported GPU acceleration.")
     except Exception:
-        pass
+        print("Warning: could not parse the NVIDIA driver version from", gpu.driver_version)
+    if (not IS_SMALL_GPU_FALLBACK) and driver_major is not None and driver_major < 580:
+        ptxas_path = shutil.which("ptxas") or "/usr/local/cuda/bin/ptxas"
+        if os.path.exists(ptxas_path):
+            os.environ["MODULAR_NVPTX_COMPILER_PATH"] = ptxas_path
+            print(
+                "Detected an older NVIDIA driver, so MAX will use "
+                f"MODULAR_NVPTX_COMPILER_PATH={ptxas_path} to try the documented bypass."
+            )
+        else:
+            message = (
+                f"Detected NVIDIA driver {gpu.driver_version}. Current MAX docs list driver 580+ "
+                "for supported GPU acceleration. Colab often uses an older driver, which can make "
+                "MAX startup hang or fail. A documented workaround is setting "
+                "MODULAR_NVPTX_COMPILER_PATH to a system ptxas binary, but none was found in this "
+                "runtime. Use a supported host for a reliable MAX run, or set "
+                "FAIL_ON_UNSUPPORTED_MAX_DRIVER = False if you want to try anyway."
+            )
+            if FAIL_ON_UNSUPPORTED_MAX_DRIVER:
+                raise RuntimeError(message)
+            print("Warning:", message)
 """
         ),
         code_cell(
@@ -209,7 +290,10 @@ else:
     )
     ACTUAL_MODULAR_SPEC = f"modular=={MODULAR_VERSION}"
 
-subprocess.run(["uv", "pip", "install", "--python", str(max_python), "requests"], check=True)
+subprocess.run(
+    ["uv", "pip", "install", "--python", str(max_python), "requests", "protobuf==6.33.5"],
+    check=True,
+)
 
 ACTUAL_VLLM_SPEC = f"vllm=={VLLM_VERSION}"
 try:
@@ -252,14 +336,62 @@ subprocess.run(
 
 MAX_BIN = str(MAX_ENV / "bin" / "max")
 VLLM_BIN = str(VLLM_ENV / "bin" / "vllm")
+MAX_SITE_PACKAGES = subprocess.run(
+    [str(max_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
+VLLM_SITE_PACKAGES = subprocess.run(
+    [str(vllm_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+    capture_output=True,
+    text=True,
+    check=True,
+).stdout.strip()
 
 max_version = subprocess.run([MAX_BIN, "--version"], capture_output=True, text=True).stdout.strip()
 vllm_version_output = subprocess.run([VLLM_BIN, "--version"], capture_output=True, text=True).stdout.strip()
+max_protobuf_probe_code = '''
+import importlib.metadata as md
+import traceback
+
+try:
+    print("protobuf dist:", md.version("protobuf"))
+except Exception as exc:
+    print("protobuf dist lookup failed:", repr(exc))
+
+try:
+    from google.protobuf import runtime_version as rv
+    print("runtime file:", getattr(rv, "__file__", "<none>"))
+    print("runtime version attr:", getattr(rv, "PROTOBUF_RUNTIME_VERSION", None))
+    print(
+        "runtime tuple:",
+        getattr(rv, "MAJOR", None),
+        getattr(rv, "MINOR", None),
+        getattr(rv, "PATCH", None),
+        getattr(rv, "SUFFIX", None),
+    )
+except Exception:
+    traceback.print_exc()
+'''
+max_protobuf_probe = subprocess.run(
+    [str(max_python), "-c", max_protobuf_probe_code],
+    capture_output=True,
+    text=True,
+    check=False,
+)
 
 print("MAX install:", ACTUAL_MODULAR_SPEC)
 print("MAX version:", max_version)
+print("MAX site-packages:", MAX_SITE_PACKAGES)
+print("MAX protobuf probe exit:", max_protobuf_probe.returncode)
+if max_protobuf_probe.stdout:
+    print(max_protobuf_probe.stdout.strip())
+if max_protobuf_probe.stderr:
+    print(max_protobuf_probe.stderr.strip())
 print("vLLM install:", ACTUAL_VLLM_SPEC)
 print("vLLM version:", vllm_version_output)
+print("vLLM site-packages:", VLLM_SITE_PACKAGES)
 """
         ),
         markdown_cell(
@@ -270,15 +402,35 @@ This uses the OpenAI-compatible `max serve` endpoint and then benchmarks it with
         ),
         code_cell(
             """from gemma4_colab_benchmark_helper import (
-    ensure_server_ready,
+    ensure_server_ready_with_logs,
+    run,
+    run_best_effort,
     start_logged_process,
     tail_log,
     warmup_chat,
 )
 
 server_env = os.environ.copy()
-server_env["HF_TOKEN"] = HF_TOKEN
+if HF_TOKEN:
+    server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["VIRTUAL_ENV"] = str(MAX_ENV)
+server_env["PATH"] = f"{MAX_ENV / 'bin'}:{server_env['PATH']}"
+server_env["PYTHONNOUSERSITE"] = "1"
+server_env["PYTHONPATH"] = MAX_SITE_PACKAGES
+
+if RUN_MAX_WARM_CACHE:
+    warm_cache_ok = run_best_effort(
+        [
+            MAX_BIN,
+            "warm-cache",
+            "--model",
+            MODEL,
+        ],
+        env=server_env,
+    )
+    if not warm_cache_ok:
+        print("MAX warm-cache failed. Continuing to max serve anyway because warm-cache is optional.")
 
 max_handle = start_logged_process(
     "max_server",
@@ -302,7 +454,11 @@ max_handle = start_logged_process(
     env=server_env,
 )
 
-ensure_server_ready(f"http://127.0.0.1:{MAX_PORT}", timeout_s=1800)
+ensure_server_ready_with_logs(
+    f"http://127.0.0.1:{MAX_PORT}",
+    max_handle,
+    timeout_s=MAX_STARTUP_TIMEOUT_S,
+)
 warmup_chat(f"http://127.0.0.1:{MAX_PORT}", MODEL)
 print(tail_log(max_handle.log_path, lines=40))
 """
@@ -325,6 +481,7 @@ max_result_path = run_benchmark(
     random_output_len=RANDOM_OUTPUT_LEN,
     random_coefficient_of_variation=RANDOM_COV,
     tokenizer=MODEL,
+    env=server_env,
 )
 
 max_result = load_benchmark_result(max_result_path)
@@ -353,8 +510,13 @@ This uses `vllm serve` with the same model and then benchmarks it with `max benc
 )
 
 server_env = os.environ.copy()
-server_env["HF_TOKEN"] = HF_TOKEN
+if HF_TOKEN:
+    server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
+server_env["VIRTUAL_ENV"] = str(VLLM_ENV)
+server_env["PATH"] = f"{VLLM_ENV / 'bin'}:{server_env['PATH']}"
+server_env["PYTHONNOUSERSITE"] = "1"
+server_env["PYTHONPATH"] = VLLM_SITE_PACKAGES
 
 vllm_handle = start_logged_process(
     "vllm_server",
@@ -400,6 +562,7 @@ vllm_result_path = run_benchmark(
     random_output_len=RANDOM_OUTPUT_LEN,
     random_coefficient_of_variation=RANDOM_COV,
     tokenizer=MODEL,
+    env=server_env,
 )
 
 vllm_result = load_benchmark_result(vllm_result_path)
@@ -470,6 +633,7 @@ print("Raw benchmark JSON files are in", RESULT_DIR)
             """## How To Interpret What You See
 
 - If your output throughput delta is positive, MAX was faster on **your** runtime and settings.
+- If the notebook selected `allenai/OLMo-2-0425-1B-Instruct`, this run is only validating the notebook workflow and giving a directional MAX-vs-vLLM comparison on a small GPU.
 - If your runtime was not a **B200**, do not treat the result as a direct reproduction of the Modular blog number.
 - If the notebook had to fall back from `vllm==0.18.2rc1.dev7`, note that in your conclusions because the blog explicitly names that version.
 - To get closer to the blog setup, rerun this notebook on a **B200** or at least an **80 GiB** GPU and use `google/gemma-4-26B-A4B-it`.
