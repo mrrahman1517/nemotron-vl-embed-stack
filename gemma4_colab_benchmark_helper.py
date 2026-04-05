@@ -80,14 +80,14 @@ def detect_gpu() -> GPUInfo | None:
     )
 
 
-def choose_gemma4_model(gpu: GPUInfo | None, force_model: str | None = None) -> tuple[str, str]:
+def choose_benchmark_model(gpu: GPUInfo | None, force_model: str | None = None) -> tuple[str, str]:
     if force_model:
         return force_model, "Using a user-forced model override."
 
     if gpu is None:
         return (
-            "google/gemma-4-E4B-it",
-            "GPU detection failed; defaulting to Gemma 4 E4B for a smaller-footprint run.",
+            "meta-llama/Llama-3.2-1B-Instruct",
+            "GPU detection failed; defaulting to a small compatibility model so the notebook can still validate the benchmark flow.",
         )
 
     if gpu.memory_gb >= 75:
@@ -107,9 +107,15 @@ def choose_gemma4_model(gpu: GPUInfo | None, force_model: str | None = None) -> 
             "This is a directional Colab-friendly run on a smaller Gemma 4 variant because typical Colab GPUs do not expose B200-class memory.",
         )
 
+    if gpu.memory_gb >= 14:
+        return (
+            "meta-llama/Llama-3.2-1B-Instruct",
+            "No Gemma 4 model cleanly fits on this GPU. Falling back to a smaller Llama model so you can still compare MAX and vLLM on the same runtime. Treat this as a methodology check, not verification of the Gemma 4 claim.",
+        )
+
     raise RuntimeError(
         f"Detected only {gpu.memory_gb:.1f} GiB of VRAM on {gpu.name}. "
-        "Use at least a 24 GiB GPU for Gemma 4 E4B, or switch to an 80 GiB-class runtime for Gemma 4 26B-A4B."
+        "This is too small for the Gemma 4 models targeted by this notebook and likely too tight even for a useful fallback benchmark."
     )
 
 

@@ -41,7 +41,7 @@ This notebook is designed to test the April 2, 2026 Modular blog claim that **MA
 
 What this notebook does:
 
-- runs **MAX** and **vLLM** side by side against the same Gemma 4 model
+- runs **MAX** and **vLLM** side by side against the same selected model on the current runtime
 - benchmarks both with the **same harness**: `max benchmark`
 - reports request throughput, output token throughput, TTFT, TPOT, ITL, and optional GPU stats
 
@@ -50,6 +50,7 @@ Important caveat:
 - the blog claim is about **NVIDIA B200** hardware
 - most Colab runtimes provide **L4** or **A100**, not B200
 - if you run this on L4 or A100, the result is still useful, but it is a **directional comparison**, not an exact reproduction of the published number
+- if you run this on a **T4 or other sub-24GB GPU**, the notebook now drops into a **small-GPU fallback mode** with a much smaller model so you can still compare MAX and vLLM on the same machine
 """
         ),
         markdown_cell(
@@ -68,6 +69,7 @@ Practical interpretation:
 
 - if the runtime has about **24 GiB** VRAM, this notebook defaults to `google/gemma-4-E4B-it`
 - if the runtime has about **80 GiB** VRAM, it defaults to `google/gemma-4-26B-A4B-it`
+- if the runtime has about **14 to 16 GiB** VRAM, it falls back to `meta-llama/Llama-3.2-1B-Instruct`
 - only a **B200-class** run can directly test the blog's exact hardware claim
 """
         ),
@@ -79,6 +81,7 @@ Use these as starting points before you run the benchmark:
 - **Colab L4 (24 GiB)**: keep the default `google/gemma-4-E4B-it`, use `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`, and leave `GPU_MEMORY_UTILIZATION = 0.90`
 - **Colab A100 (40 GiB)**: still use `google/gemma-4-E4B-it`, and you can usually try `NUM_PROMPTS = 96` to `128` and `MAX_CONCURRENCY = 8` to `16`
 - **80 GiB GPU or larger**: switch to `google/gemma-4-26B-A4B-it`, use `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`, and keep `GPU_MEMORY_UTILIZATION` between `0.85` and `0.90`
+- **T4 / 16 GiB-class GPU**: let the notebook fall back to `meta-llama/Llama-3.2-1B-Instruct`, use shorter contexts, and treat the result as a methodology check only
 - **B200**: this is the only class of hardware that can directly test the published claim instead of just giving a directional comparison
 
 If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then reduce `MAX_CONCURRENCY`, and finally reduce `NUM_PROMPTS`.
@@ -87,11 +90,11 @@ If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then re
         markdown_cell(
             """## Before You Run
 
-You need Hugging Face access for the Gemma 4 checkpoints.
+You need Hugging Face access for the model the notebook will use.
 
 Recommended setup:
 
-- accept the Gemma 4 model license on Hugging Face for the model you plan to test
+- accept the Hugging Face model license for the model you plan to test
 - create a Hugging Face access token with model download access
 - store it in a Colab secret named `HF_TOKEN`
 
@@ -127,7 +130,7 @@ import os
 import shutil
 from pathlib import Path
 
-from gemma4_colab_benchmark_helper import choose_gemma4_model, detect_gpu
+from gemma4_colab_benchmark_helper import choose_benchmark_model, detect_gpu
 
 os.environ.setdefault("HF_HOME", "/content/hf-cache")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
@@ -162,12 +165,7 @@ GPU_MEMORY_UTILIZATION = 0.90
 FAIL_ON_UNSUPPORTED_MAX_DRIVER = True
 RUN_MAX_WARM_CACHE = True
 MAX_STARTUP_TIMEOUT_S = 1800
-MAX_BATCH_SIZE = 4 if gpu and gpu.memory_gb < 90 else 8
 BENCHMARK_DATASET = "random"
-NUM_PROMPTS = 64 if gpu and gpu.memory_gb < 75 else 128
-MAX_CONCURRENCY = 8 if gpu and gpu.memory_gb < 75 else 16
-RANDOM_INPUT_LEN = 550
-RANDOM_OUTPUT_LEN = 256
 RANDOM_COV = "0.0,0.0"
 REQUEST_RATE = "inf"
 MAX_PORT = 8000
@@ -176,20 +174,38 @@ LOG_DIR = Path("/content/benchmark-logs")
 RESULT_DIR = Path("/content/benchmark-results")
 ENV_ROOT = Path("/content/benchmark-envs")
 
-MODEL, MODEL_NOTE = choose_gemma4_model(gpu, FORCE_MODEL)
-MAX_MODEL_LEN = 8192 if "E4B" in MODEL else 32768
+MODEL, MODEL_NOTE = choose_benchmark_model(gpu, FORCE_MODEL)
+IS_SMALL_GPU_FALLBACK = MODEL == "meta-llama/Llama-3.2-1B-Instruct"
+
+if IS_SMALL_GPU_FALLBACK:
+    GPU_MEMORY_UTILIZATION = 0.85
+    MAX_BATCH_SIZE = 4
+    NUM_PROMPTS = 32
+    MAX_CONCURRENCY = 4
+    RANDOM_INPUT_LEN = 256
+    RANDOM_OUTPUT_LEN = 96
+    MAX_MODEL_LEN = 4096
+else:
+    MAX_BATCH_SIZE = 4 if gpu and gpu.memory_gb < 90 else 8
+    NUM_PROMPTS = 64 if gpu and gpu.memory_gb < 75 else 128
+    MAX_CONCURRENCY = 8 if gpu and gpu.memory_gb < 75 else 16
+    RANDOM_INPUT_LEN = 550
+    RANDOM_OUTPUT_LEN = 256
+    MAX_MODEL_LEN = 8192 if "E4B" in MODEL else 32768
 
 print("Selected model:", MODEL)
 print("Selection note:", MODEL_NOTE)
 if gpu and "B200" not in gpu.name.upper():
     print("This is not a B200 runtime, so the result should be interpreted as directional rather than exact.")
+if IS_SMALL_GPU_FALLBACK:
+    print("Small-GPU fallback mode is active. This run is for MAX-vs-vLLM methodology comparison only, not Gemma 4 claim verification.")
 if gpu:
     driver_major = None
     try:
         driver_major = int(gpu.driver_version.split(".")[0])
     except Exception:
         print("Warning: could not parse the NVIDIA driver version from", gpu.driver_version)
-    if driver_major is not None and driver_major < 580:
+    if (not IS_SMALL_GPU_FALLBACK) and driver_major is not None and driver_major < 580:
         ptxas_path = shutil.which("ptxas") or "/usr/local/cuda/bin/ptxas"
         if os.path.exists(ptxas_path):
             os.environ["MODULAR_NVPTX_COMPILER_PATH"] = ptxas_path
@@ -540,6 +556,7 @@ print("Raw benchmark JSON files are in", RESULT_DIR)
             """## How To Interpret What You See
 
 - If your output throughput delta is positive, MAX was faster on **your** runtime and settings.
+- If the notebook selected `meta-llama/Llama-3.2-1B-Instruct`, this run is only validating the notebook workflow and giving a directional MAX-vs-vLLM comparison on a small GPU.
 - If your runtime was not a **B200**, do not treat the result as a direct reproduction of the Modular blog number.
 - If the notebook had to fall back from `vllm==0.18.2rc1.dev7`, note that in your conclusions because the blog explicitly names that version.
 - To get closer to the blog setup, rerun this notebook on a **B200** or at least an **80 GiB** GPU and use `google/gemma-4-26B-A4B-it`.

@@ -31,16 +31,18 @@ Important limitation:
 - the published claim was measured on NVIDIA B200
 - typical Colab GPUs are L4 or A100
 - so a standard Colab run is a directional comparison unless you have access to a B200-class runtime
+- on a T4 or other sub-24GB GPU, the notebook now falls back to a much smaller model so you can still compare MAX and vLLM on the same machine
 
 Recommended starting points:
 
 - L4 24 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`
 - A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
 - 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
+- T4 16 GiB: fallback to `meta-llama/Llama-3.2-1B-Instruct`, shorter contexts, and interpret the result as a methodology check only
 
 Token setup:
 
-- accept the Gemma 4 model license on Hugging Face first
+- accept the Hugging Face license for whichever model the notebook selects first
 - add a Colab secret named `HF_TOKEN` if you want a clean notebook run
 - if you skip the secret, the notebook will prompt for the token with hidden input
 
