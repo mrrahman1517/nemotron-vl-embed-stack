@@ -38,6 +38,12 @@ Recommended starting points:
 - A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
 - 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
 
+Token setup:
+
+- accept the Gemma 4 model license on Hugging Face first
+- add a Colab secret named `HF_TOKEN` if you want a clean notebook run
+- if you skip the secret, the notebook will prompt for the token with hidden input
+
 ## Notes
 
 - The notebook now falls back to CPU automatically when CUDA is not available.

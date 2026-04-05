@@ -84,6 +84,20 @@ Use these as starting points before you run the benchmark:
 If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then reduce `MAX_CONCURRENCY`, and finally reduce `NUM_PROMPTS`.
 """
         ),
+        markdown_cell(
+            """## Before You Run
+
+You need Hugging Face access for the Gemma 4 checkpoints.
+
+Recommended setup:
+
+- accept the Gemma 4 model license on Hugging Face for the model you plan to test
+- create a Hugging Face access token with model download access
+- store it in a Colab secret named `HF_TOKEN`
+
+If you do not add the secret ahead of time, the notebook will prompt you for the token with hidden input.
+"""
+        ),
         code_cell(
             """import subprocess
 import sys
@@ -96,7 +110,8 @@ subprocess.run(
         ),
         code_cell(helper_write_cell),
         code_cell(
-            """import os
+            """import getpass
+import os
 from pathlib import Path
 
 from gemma4_colab_benchmark_helper import choose_gemma4_model, detect_gpu
@@ -113,8 +128,12 @@ except Exception:
     pass
 
 if not HF_TOKEN:
+    HF_TOKEN = getpass.getpass("Enter your Hugging Face token (input hidden): ").strip()
+
+if not HF_TOKEN:
     raise ValueError(
-        "Set HF_TOKEN in a Colab secret named HF_TOKEN or in os.environ before continuing."
+        "No Hugging Face token was provided. Add a Colab secret named HF_TOKEN, "
+        "set os.environ['HF_TOKEN'], or paste the token into the hidden prompt."
     )
 
 os.environ["HF_TOKEN"] = HF_TOKEN
