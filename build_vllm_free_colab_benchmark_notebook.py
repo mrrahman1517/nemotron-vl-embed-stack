@@ -171,7 +171,9 @@ This starts an OpenAI-compatible endpoint at `http://127.0.0.1:8000/v1`.
 """
         ),
         code_cell(
-            """from vllm_free_colab_benchmark_helper import (
+            """import subprocess
+
+from vllm_free_colab_benchmark_helper import (
     ensure_server_ready,
     start_logged_process,
     tail_log,
@@ -186,26 +188,39 @@ server_env["PYTHONNOUSERSITE"] = "1"
 server_env["PYTHONPATH"] = VLLM_SITE_PACKAGES
 server_env["MPLBACKEND"] = "Agg"
 
+serve_command = [
+    VLLM_BIN,
+    "serve",
+    MODEL,
+    "--host",
+    "127.0.0.1",
+    "--port",
+    str(VLLM_PORT),
+    "--max-model-len",
+    str(MAX_MODEL_LEN),
+    "--gpu-memory-utilization",
+    str(GPU_MEMORY_UTILIZATION),
+    "--dtype",
+    "half",
+    "--max-num-seqs",
+    str(MAX_NUM_SEQS),
+]
+
+serve_help = subprocess.run(
+    [VLLM_BIN, "serve", "--help"],
+    capture_output=True,
+    text=True,
+    check=False,
+    env=server_env,
+)
+if "--disable-log-requests" in serve_help.stdout:
+    serve_command.append("--disable-log-requests")
+else:
+    print("Installed vLLM build does not support --disable-log-requests; continuing without it.")
+
 vllm_handle = start_logged_process(
     "vllm_server",
-    [
-        VLLM_BIN,
-        "serve",
-        MODEL,
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(VLLM_PORT),
-        "--max-model-len",
-        str(MAX_MODEL_LEN),
-        "--gpu-memory-utilization",
-        str(GPU_MEMORY_UTILIZATION),
-        "--dtype",
-        "half",
-        "--max-num-seqs",
-        str(MAX_NUM_SEQS),
-        "--disable-log-requests",
-    ],
+    serve_command,
     log_dir=LOG_DIR,
     env=server_env,
 )
