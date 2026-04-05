@@ -50,7 +50,8 @@ Important caveat:
 - the blog claim is about **NVIDIA B200** hardware
 - most Colab runtimes provide **L4** or **A100**, not B200
 - if you run this on L4 or A100, the result is still useful, but it is a **directional comparison**, not an exact reproduction of the published number
-- if you run this on a **T4 or other sub-24GB GPU**, the notebook now drops into a **small-GPU fallback mode** with a much smaller model so you can still compare MAX and vLLM on the same machine
+- if you run this on a **T4 or other Turing-class GPU**, the notebook now stops early because current MAX docs list that class in limited compatibility and our Colab testing shows MAX compilation failure there
+- if you run this on a **non-Turing sub-24GB GPU**, the notebook can still drop into a **small-GPU fallback mode** with a much smaller model for a methodology check
 """
         ),
         markdown_cell(
@@ -69,7 +70,7 @@ Practical interpretation:
 
 - if the runtime has about **24 GiB** VRAM, this notebook defaults to `google/gemma-4-E4B-it`
 - if the runtime has about **80 GiB** VRAM, it defaults to `google/gemma-4-26B-A4B-it`
-- if the runtime has about **14 to 16 GiB** VRAM, it falls back to `allenai/OLMo-2-0425-1B-Instruct`
+- if the runtime has about **14 to 16 GiB** VRAM on a non-Turing GPU, it falls back to `allenai/OLMo-2-0425-1B-Instruct`
 - only a **B200-class** run can directly test the blog's exact hardware claim
 """
         ),
@@ -81,7 +82,7 @@ Use these as starting points before you run the benchmark:
 - **Colab L4 (24 GiB)**: keep the default `google/gemma-4-E4B-it`, use `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`, and leave `GPU_MEMORY_UTILIZATION = 0.90`
 - **Colab A100 (40 GiB)**: still use `google/gemma-4-E4B-it`, and you can usually try `NUM_PROMPTS = 96` to `128` and `MAX_CONCURRENCY = 8` to `16`
 - **80 GiB GPU or larger**: switch to `google/gemma-4-26B-A4B-it`, use `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`, and keep `GPU_MEMORY_UTILIZATION` between `0.85` and `0.90`
-- **T4 / 16 GiB-class GPU**: let the notebook fall back to `allenai/OLMo-2-0425-1B-Instruct`, use shorter contexts, and treat the result as a methodology check only
+- **T4 / Turing-class GPU**: do not use this notebook for MAX-vs-vLLM comparison; switch to an L4, A10, A100, or better runtime
 - **B200**: this is the only class of hardware that can directly test the published claim instead of just giving a directional comparison
 
 If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then reduce `MAX_CONCURRENCY`, and finally reduce `NUM_PROMPTS`.
@@ -130,7 +131,7 @@ import os
 import shutil
 from pathlib import Path
 
-from gemma4_colab_benchmark_helper import choose_benchmark_model, detect_gpu
+from gemma4_colab_benchmark_helper import choose_benchmark_model, detect_gpu, limited_max_gpu_reason
 
 os.environ.setdefault("HF_HOME", "/content/hf-cache")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
@@ -160,6 +161,7 @@ MODULAR_VERSION = "26.2"
 VLLM_VERSION = "0.18.2rc1.dev7"
 GPU_MEMORY_UTILIZATION = 0.90
 FAIL_ON_UNSUPPORTED_MAX_DRIVER = True
+FAIL_ON_LIMITED_MAX_GPU = True
 RUN_MAX_WARM_CACHE = True
 MAX_STARTUP_TIMEOUT_S = 1800
 BENCHMARK_DATASET = "random"
@@ -203,6 +205,11 @@ if gpu and "B200" not in gpu.name.upper():
     print("This is not a B200 runtime, so the result should be interpreted as directional rather than exact.")
 if IS_SMALL_GPU_FALLBACK:
     print("Small-GPU fallback mode is active. This run is for MAX-vs-vLLM methodology comparison only, not Gemma 4 claim verification.")
+limited_gpu_message = limited_max_gpu_reason(gpu)
+if limited_gpu_message:
+    if FAIL_ON_LIMITED_MAX_GPU:
+        raise RuntimeError(limited_gpu_message)
+    print("Warning:", limited_gpu_message)
 if gpu:
     driver_major = None
     try:

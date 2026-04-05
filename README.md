@@ -38,7 +38,7 @@ Recommended starting points:
 - L4 24 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`
 - A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
 - 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
-- T4 16 GiB: fallback to `allenai/OLMo-2-0425-1B-Instruct`, shorter contexts, and interpret the result as a methodology check only
+- T4 / Turing-class GPU: do not use this notebook for MAX-vs-vLLM comparison; current MAX docs list T4 and RTX 20XX in limited compatibility, and our Colab testing hit MAX compile failure on this class
 
 Token setup:
 

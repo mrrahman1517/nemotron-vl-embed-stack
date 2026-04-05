@@ -141,6 +141,21 @@ def choose_benchmark_model(gpu: GPUInfo | None, force_model: str | None = None) 
     )
 
 
+def limited_max_gpu_reason(gpu: GPUInfo | None) -> str | None:
+    if gpu is None:
+        return None
+
+    name = gpu.name.upper()
+    compute_capability = (gpu.compute_capability or "").strip()
+    if "T4" in name or "RTX 20" in name or compute_capability.startswith("7.5"):
+        return (
+            f"Detected {gpu.name} (compute capability {compute_capability or 'unknown'}), which is a Turing-class GPU. "
+            "Current MAX package docs place NVIDIA T4 and RTX 20XX in limited compatibility and state that these GPUs "
+            'do not currently run major GenAI models with MAX. This notebook should use an L4, A10, A100, H100/H200, or B200-class GPU for a real MAX-vs-vLLM comparison.'
+        )
+    return None
+
+
 def start_logged_process(
     name: str,
     command: list[str],
