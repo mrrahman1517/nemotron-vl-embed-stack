@@ -69,7 +69,7 @@ Practical interpretation:
 
 - if the runtime has about **24 GiB** VRAM, this notebook defaults to `google/gemma-4-E4B-it`
 - if the runtime has about **80 GiB** VRAM, it defaults to `google/gemma-4-26B-A4B-it`
-- if the runtime has about **14 to 16 GiB** VRAM, it falls back to `meta-llama/Llama-3.2-1B-Instruct`
+- if the runtime has about **14 to 16 GiB** VRAM, it falls back to `allenai/OLMo-2-0425-1B-Instruct`
 - only a **B200-class** run can directly test the blog's exact hardware claim
 """
         ),
@@ -81,7 +81,7 @@ Use these as starting points before you run the benchmark:
 - **Colab L4 (24 GiB)**: keep the default `google/gemma-4-E4B-it`, use `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`, and leave `GPU_MEMORY_UTILIZATION = 0.90`
 - **Colab A100 (40 GiB)**: still use `google/gemma-4-E4B-it`, and you can usually try `NUM_PROMPTS = 96` to `128` and `MAX_CONCURRENCY = 8` to `16`
 - **80 GiB GPU or larger**: switch to `google/gemma-4-26B-A4B-it`, use `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`, and keep `GPU_MEMORY_UTILIZATION` between `0.85` and `0.90`
-- **T4 / 16 GiB-class GPU**: let the notebook fall back to `meta-llama/Llama-3.2-1B-Instruct`, use shorter contexts, and treat the result as a methodology check only
+- **T4 / 16 GiB-class GPU**: let the notebook fall back to `allenai/OLMo-2-0425-1B-Instruct`, use shorter contexts, and treat the result as a methodology check only
 - **B200**: this is the only class of hardware that can directly test the published claim instead of just giving a directional comparison
 
 If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then reduce `MAX_CONCURRENCY`, and finally reduce `NUM_PROMPTS`.
@@ -90,15 +90,15 @@ If either engine OOMs during load, lower `GPU_MEMORY_UTILIZATION` first, then re
         markdown_cell(
             """## Before You Run
 
-You need Hugging Face access for the model the notebook will use.
+You may need Hugging Face access for the model the notebook will use.
 
 Recommended setup:
 
-- accept the Hugging Face model license for the model you plan to test
+- accept the Hugging Face model license for the model you plan to test if it is gated
 - create a Hugging Face access token with model download access
-- store it in a Colab secret named `HF_TOKEN`
+- store it in a Colab secret named `HF_TOKEN` when you are using a gated model such as Gemma 4
 
-If you do not add the secret ahead of time, the notebook will prompt you for the token with hidden input.
+If you do not add the secret ahead of time, the notebook will prompt you for the token with hidden input only when the selected model likely needs it.
 """
         ),
         markdown_cell(
@@ -135,6 +135,13 @@ from gemma4_colab_benchmark_helper import choose_benchmark_model, detect_gpu
 os.environ.setdefault("HF_HOME", "/content/hf-cache")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
+gpu = detect_gpu()
+print("Detected GPU:", gpu)
+
+FORCE_MODEL = None
+MODEL, MODEL_NOTE = choose_benchmark_model(gpu, FORCE_MODEL)
+IS_SMALL_GPU_FALLBACK = MODEL == "allenai/OLMo-2-0425-1B-Instruct"
+
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 try:
     from google.colab import userdata
@@ -143,21 +150,11 @@ try:
 except Exception:
     pass
 
-if not HF_TOKEN:
+MODEL_LIKELY_GATED = MODEL.startswith(("google/", "meta-llama/"))
+
+if MODEL_LIKELY_GATED and not HF_TOKEN:
     HF_TOKEN = getpass.getpass("Enter your Hugging Face token (input hidden): ").strip()
 
-if not HF_TOKEN:
-    raise ValueError(
-        "No Hugging Face token was provided. Add a Colab secret named HF_TOKEN, "
-        "set os.environ['HF_TOKEN'], or paste the token into the hidden prompt."
-    )
-
-os.environ["HF_TOKEN"] = HF_TOKEN
-
-gpu = detect_gpu()
-print("Detected GPU:", gpu)
-
-FORCE_MODEL = None
 MODULAR_CHANNEL = "stable"  # change to "nightly" if you want the newest MAX build
 MODULAR_VERSION = "26.2"
 VLLM_VERSION = "0.18.2rc1.dev7"
@@ -174,8 +171,15 @@ LOG_DIR = Path("/content/benchmark-logs")
 RESULT_DIR = Path("/content/benchmark-results")
 ENV_ROOT = Path("/content/benchmark-envs")
 
-MODEL, MODEL_NOTE = choose_benchmark_model(gpu, FORCE_MODEL)
-IS_SMALL_GPU_FALLBACK = MODEL == "meta-llama/Llama-3.2-1B-Instruct"
+if HF_TOKEN:
+    os.environ["HF_TOKEN"] = HF_TOKEN
+elif MODEL_LIKELY_GATED:
+    raise ValueError(
+        "No Hugging Face token was provided for a gated model. Add a Colab secret named HF_TOKEN, "
+        "set os.environ['HF_TOKEN'], or paste the token into the hidden prompt."
+    )
+else:
+    print("Proceeding without HF_TOKEN because the selected fallback model is open.")
 
 if IS_SMALL_GPU_FALLBACK:
     GPU_MEMORY_UTILIZATION = 0.85
@@ -342,17 +346,19 @@ This uses the OpenAI-compatible `max serve` endpoint and then benchmarks it with
             """from gemma4_colab_benchmark_helper import (
     ensure_server_ready_with_logs,
     run,
+    run_best_effort,
     start_logged_process,
     tail_log,
     warmup_chat,
 )
 
 server_env = os.environ.copy()
-server_env["HF_TOKEN"] = HF_TOKEN
+if HF_TOKEN:
+    server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
 
 if RUN_MAX_WARM_CACHE:
-    run(
+    warm_cache_ok = run_best_effort(
         [
             MAX_BIN,
             "warm-cache",
@@ -361,6 +367,8 @@ if RUN_MAX_WARM_CACHE:
         ],
         env=server_env,
     )
+    if not warm_cache_ok:
+        print("MAX warm-cache failed. Continuing to max serve anyway because warm-cache is optional.")
 
 max_handle = start_logged_process(
     "max_server",
@@ -439,7 +447,8 @@ This uses `vllm serve` with the same model and then benchmarks it with `max benc
 )
 
 server_env = os.environ.copy()
-server_env["HF_TOKEN"] = HF_TOKEN
+if HF_TOKEN:
+    server_env["HF_TOKEN"] = HF_TOKEN
 server_env["HF_HOME"] = os.environ["HF_HOME"]
 
 vllm_handle = start_logged_process(
@@ -556,7 +565,7 @@ print("Raw benchmark JSON files are in", RESULT_DIR)
             """## How To Interpret What You See
 
 - If your output throughput delta is positive, MAX was faster on **your** runtime and settings.
-- If the notebook selected `meta-llama/Llama-3.2-1B-Instruct`, this run is only validating the notebook workflow and giving a directional MAX-vs-vLLM comparison on a small GPU.
+- If the notebook selected `allenai/OLMo-2-0425-1B-Instruct`, this run is only validating the notebook workflow and giving a directional MAX-vs-vLLM comparison on a small GPU.
 - If your runtime was not a **B200**, do not treat the result as a direct reproduction of the Modular blog number.
 - If the notebook had to fall back from `vllm==0.18.2rc1.dev7`, note that in your conclusions because the blog explicitly names that version.
 - To get closer to the blog setup, rerun this notebook on a **B200** or at least an **80 GiB** GPU and use `google/gemma-4-26B-A4B-it`.

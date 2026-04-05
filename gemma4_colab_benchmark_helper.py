@@ -38,6 +38,28 @@ def run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: str | None = 
     subprocess.run(cmd, check=True, env=env, cwd=cwd)
 
 
+def run_best_effort(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+) -> bool:
+    print("$", shlex.join(cmd))
+    completed = subprocess.run(
+        cmd,
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=cwd,
+    )
+    if completed.stdout:
+        print(completed.stdout)
+    if completed.stderr:
+        print(completed.stderr)
+    return completed.returncode == 0
+
+
 def capture(cmd: list[str], *, env: dict[str, str] | None = None, cwd: str | None = None) -> str:
     print("$", shlex.join(cmd))
     completed = subprocess.run(
@@ -86,8 +108,8 @@ def choose_benchmark_model(gpu: GPUInfo | None, force_model: str | None = None) 
 
     if gpu is None:
         return (
-            "meta-llama/Llama-3.2-1B-Instruct",
-            "GPU detection failed; defaulting to a small compatibility model so the notebook can still validate the benchmark flow.",
+            "allenai/OLMo-2-0425-1B-Instruct",
+            "GPU detection failed; defaulting to a small open compatibility model so the notebook can still validate the benchmark flow.",
         )
 
     if gpu.memory_gb >= 75:
@@ -109,8 +131,8 @@ def choose_benchmark_model(gpu: GPUInfo | None, force_model: str | None = None) 
 
     if gpu.memory_gb >= 14:
         return (
-            "meta-llama/Llama-3.2-1B-Instruct",
-            "No Gemma 4 model cleanly fits on this GPU. Falling back to a smaller Llama model so you can still compare MAX and vLLM on the same runtime. Treat this as a methodology check, not verification of the Gemma 4 claim.",
+            "allenai/OLMo-2-0425-1B-Instruct",
+            "No Gemma 4 model cleanly fits on this GPU. Falling back to a smaller open OLMo model so you can still compare MAX and vLLM on the same runtime. Treat this as a methodology check, not verification of the Gemma 4 claim.",
         )
 
     raise RuntimeError(

@@ -31,27 +31,27 @@ Important limitation:
 - the published claim was measured on NVIDIA B200
 - typical Colab GPUs are L4 or A100
 - so a standard Colab run is a directional comparison unless you have access to a B200-class runtime
-- on a T4 or other sub-24GB GPU, the notebook now falls back to a much smaller model so you can still compare MAX and vLLM on the same machine
+- on a T4 or other sub-24GB GPU, the notebook now falls back to a much smaller open model so you can still compare MAX and vLLM on the same machine
 
 Recommended starting points:
 
 - L4 24 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 64`, `MAX_CONCURRENCY = 8`
 - A100 40 GiB: `google/gemma-4-E4B-it`, `NUM_PROMPTS = 96` to `128`, `MAX_CONCURRENCY = 8` to `16`
 - 80 GiB or B200-class GPU: `google/gemma-4-26B-A4B-it`, `NUM_PROMPTS = 128`, `MAX_CONCURRENCY = 16`
-- T4 16 GiB: fallback to `meta-llama/Llama-3.2-1B-Instruct`, shorter contexts, and interpret the result as a methodology check only
+- T4 16 GiB: fallback to `allenai/OLMo-2-0425-1B-Instruct`, shorter contexts, and interpret the result as a methodology check only
 
 Token setup:
 
-- accept the Hugging Face license for whichever model the notebook selects first
+- accept the Hugging Face license for whichever model the notebook selects first if that model is gated
 - add a Colab secret named `HF_TOKEN` if you want a clean notebook run
-- if you skip the secret, the notebook will prompt for the token with hidden input
+- if you skip the secret, the notebook will only prompt for the token when the selected model likely needs it
 
 MAX startup troubleshooting:
 
 - current MAX docs list NVIDIA driver `580+` for supported GPU acceleration
 - many Colab runtimes use an older NVIDIA driver, which can cause `max serve` to stall or fail
 - current MAX docs also note that older NVIDIA drivers can sometimes be bypassed by setting `MODULAR_NVPTX_COMPILER_PATH` to a system `ptxas` binary
-- the notebook now does a MAX driver preflight and a `max warm-cache` step before `max serve`
+- the notebook now does a MAX driver preflight and a best-effort `max warm-cache` step before `max serve`
 - if you still want to try an older driver anyway, set `FAIL_ON_UNSUPPORTED_MAX_DRIVER = False` in the setup cell
 
 ## Notes
